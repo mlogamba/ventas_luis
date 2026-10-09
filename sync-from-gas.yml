@@ -1,0 +1,50 @@
+# Apps Script → GitHub: ogni 30 minuti scarica lo script e, se è cambiato nell'editor, lo committa su main
+name: Sync from Apps Script
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: gas-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install -g @google/clasp@2.4.2
+      - name: Credenziali clasp
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+        run: |
+          echo "$CLASPRC_JSON" > ~/.clasprc.json
+          echo "{\"scriptId\":\"$SCRIPT_ID\",\"rootDir\":\"src\",\"fileExtension\":\"gs\"}" > .clasp.json
+      - name: Pull dall'editor di Apps Script
+        run: clasp pull
+      - name: Commit se ci sono modifiche
+        id: commit
+        run: |
+          # Normalizza i fine riga per evitare falsi diff
+          find src -type f \( -name '*.gs' -o -name '*.html' -o -name '*.json' \) -exec sed -i 's/\r$//' {} +
+          if [ -n "$(git status --porcelain src)" ]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add src
+            git commit -m "Sync da Apps Script"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Ripubblica il sito (i push del bot non attivano altri workflow)
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-pages.yml
