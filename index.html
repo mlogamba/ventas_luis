@@ -3189,7 +3189,7 @@ let currentEditPhotos = [];
 let currentGalleryPhotos = [];
 let currentGalleryIndex = 0;
 
-function compressImageFile(file, maxWidth = 800, maxHeight = 800, quality = 0.70) {
+function compressImageFile(file, maxWidth = 400, maxHeight = 400, quality = 0.55) {
   return new Promise((resolve, reject) => {
     if (!file) return resolve(null);
     if (!file.type || !file.type.startsWith('image/')) return resolve(null);
@@ -3217,7 +3217,6 @@ function compressImageFile(file, maxWidth = 800, maxHeight = 800, quality = 0.70
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
-        // Riempi sfondo bianco per evitare sfondo nero su immagini PNG trasparenti
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
@@ -3225,7 +3224,7 @@ function compressImageFile(file, maxWidth = 800, maxHeight = 800, quality = 0.70
         const dataUrl = canvas.toDataURL('image/jpeg', quality);
         resolve({
           dataUrl: dataUrl,
-          name: file.name || 'foto.jpg',
+          name: (file.name || 'foto.jpg').replace(/.[^.]+$/, '.jpg'),
           size: Math.round(dataUrl.length * 0.75)
         });
       };
@@ -3240,39 +3239,60 @@ function compressImageFile(file, maxWidth = 800, maxHeight = 800, quality = 0.70
  * Evita errori di timeout e 'Failed to fetch' su Google Apps Script
  */
 async function uploadPhotosSequentially(photosToUpload) {
+  // Nuovo sistema robusto: upload 1 foto alla volta con 3 tentativi ciascuna
+  // Compressione aggressiva (400px/55%) garantisce payload ~8-18KB per foto
   const uploadedUrls = [];
+  const MAX_RETRIES = 3;
+
   for (let i = 0; i < photosToUpload.length; i++) {
     const item = photosToUpload[i];
+
+    // Se è già un URL http, non ha bisogno di upload
     if (!item.dataUrl || item.dataUrl.startsWith('http')) {
-      if (item.url || item.dataUrl) uploadedUrls.push(item.url || item.dataUrl);
+      const existing = item.url || item.dataUrl;
+      if (existing) uploadedUrls.push(existing);
       continue;
     }
-    try {
-      // 1. Prova prima l'upload singolo leggero
-      const res = await callServer('uploadSingleImage', {
-        photo: { dataUrl: item.dataUrl, name: item.name || ('foto_' + (i + 1) + '.jpg') }
-      }, null);
-      if (res && res.url) {
-        uploadedUrls.push(res.url);
-        continue;
+
+    // Mostra progresso
+    showFloatingSync('Subiendo foto ' + (i + 1) + ' de ' + photosToUpload.length + '...');
+
+    let uploaded = false;
+    let lastError = '';
+
+    for (let attempt = 1; attempt <= MAX_RETRIES && !uploaded; attempt++) {
+      try {
+        const photoPayload = {
+          dataUrl: item.dataUrl,
+          name: item.name || ('foto_' + (i + 1) + '.jpg')
+        };
+
+        // Prova uploadSingleImage (più leggero)
+        const res = await callServer('uploadSingleImage', { photo: photoPayload }, null);
+        if (res && res.url && res.url.startsWith('http')) {
+          uploadedUrls.push(res.url);
+          uploaded = true;
+          break;
+        }
+      } catch (e1) {
+        lastError = e1.message;
+        console.warn('Tentativo ' + attempt + ' uploadSingleImage fallito:', e1.message);
+
+        // Piccola pausa prima di riprovare
+        if (attempt < MAX_RETRIES) {
+          await new Promise(r => setTimeout(r, 600 * attempt));
+        }
       }
-    } catch (e1) {
-      console.warn('Upload singola immagine non riuscito, provo fallback batch:', e1.message);
     }
 
-    // 2. Fallback su uploadProductImages
-    try {
-      const resBatch = await callServer('uploadProductImages', {
-        photos: [{ dataUrl: item.dataUrl, name: item.name || ('foto_' + (i + 1) + '.jpg') }]
-      }, null);
-      if (resBatch && resBatch.urls && resBatch.urls.length > 0) {
-        uploadedUrls.push(resBatch.urls[0]);
-        continue;
-      }
-    } catch (e2) {
-      console.warn('Fallback batch fallito:', e2.message);
+    // Se tutti i tentativi falliscono, conserva il dataUrl locale come fallback
+    if (!uploaded) {
+      console.warn('Foto ' + (i+1) + ' non caricata su Drive (' + lastError + '), conservata localmente');
+      uploadedUrls.push(item.dataUrl); // mantieni anteprima locale
     }
   }
+
+  hideFloatingSync();
   return uploadedUrls;
 }
 
@@ -4171,8 +4191,8 @@ function saveLocalData() {
     try {
       const lightProducts = (APP_STATE.products || []).map(p => ({
         ...p,
-        photoUrl: (p.photoUrl && p.photoUrl.startsWith('data:')) ? p.photoUrl.slice(0, 100) : p.photoUrl,
-        photoUrls: (p.photoUrls || []).map(u => (u && u.startsWith('data:')) ? u.slice(0, 100) : u)
+        photoUrl: (p.photoUrl && p.photoUrl.startsWith('data:') && p.photoUrl.length > 60000) ? p.photoUrl.slice(0, 60000) : p.photoUrl,
+        photoUrls: (p.photoUrls || []).map(u => (u && u.startsWith('data:') && u.length > 60000) ? u.slice(0, 60000) : u)
       }));
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ ...toSave, products: lightProducts }));
     } catch(e2) {}
@@ -5103,15 +5123,18 @@ function renderSalesTable() {
       shipBadge = '<span class="status-badge" style="background: #fee2e2; color: var(--danger); border: 1px solid #fecaca; font-weight: 600;"><i class="fa-solid fa-rotate-left"></i> Devuelta</span>';
     }
 
-    let actionsMenu = 
-      '<div class="dropdown">' +
-        '<button class="btn btn-secondary btn-sm" onclick="toggleDropdown(event, this)"><i class="fa-solid fa-ellipsis-vertical"></i> Opciones</button>' +
-        '<div class="dropdown-menu">' +
-          (!isShipped && !isReturned ? '<button onclick="openRegisterShippingModal(\'' + s.id + '\')"><i class="fa-solid fa-truck"></i> Registrar Envío</button>' : '') +
-          (!isReturned ? '<button onclick="openReturnSaleModal(\'' + s.id + '\')"><i class="fa-solid fa-rotate-left"></i> Marcar Devolución</button>' : '') +
-          (s.shippingProofUrl ? '<button onclick="showQrModal(\'' + escapeHtml(s.shippingProofUrl) + '\', \'' + escapeHtml(s.id) + '\')"><i class="fa-solid fa-qrcode"></i> Ver QR / Etiqueta Envío</button>' : '') +
-          '<button class="text-danger" onclick="openDoubleConfirmDeleteSaleModal(\'' + s.id + '\')"><i class="fa-solid fa-trash-can"></i> Eliminar Venta (Admin)</button>' +
-        '</div>' +
+    // Pulsanti diretti (senza dropdown) - più veloci e visibili su mobile
+    let actionsMenu = '<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;">' +
+      (!isShipped && !isReturned
+        ? '<button class="btn btn-primary btn-sm" onclick="openRegisterShippingModal(\'' + s.id + '\')" title="Registrar envío"><i class="fa-solid fa-truck"></i> Enviar</button>'
+        : '') +
+      (!isReturned
+        ? '<button class="btn btn-warning btn-sm" onclick="openReturnSaleModal(\'' + s.id + '\')" title="Marcar como devolución"><i class="fa-solid fa-rotate-left"></i> Devolución</button>'
+        : '') +
+      (s.shippingProofUrl
+        ? '<button class="btn btn-secondary btn-sm" onclick="showQrModal(\'' + escapeHtml(s.shippingProofUrl) + '\', \'' + escapeHtml(s.id) + '\')" title="Ver QR"><i class="fa-solid fa-qrcode"></i> QR</button>'
+        : '') +
+      '<button class="btn btn-danger btn-sm" onclick="openDoubleConfirmDeleteSaleModal(\'' + s.id + '\')" title="Eliminar venta"><i class="fa-solid fa-trash-can"></i> Eliminar</button>' +
       '</div>';
 
     tr.innerHTML = 
@@ -5409,7 +5432,11 @@ function renderShippedTable() {
 
     let actionBtn = '-';
     if (isAdmin) {
-      actionBtn = '<button class="btn btn-danger btn-sm" onclick="openReturnSaleModal(\'' + s.id + '\')" title="Marcar como Devolución"><i class="fa-solid fa-rotate-left"></i> Devolución</button>';
+      actionBtn =
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;">' +
+        '<button class="btn btn-warning btn-sm" onclick="openReturnSaleModal(\'' + s.id + '\')" title="Marcar como Devolución"><i class="fa-solid fa-rotate-left"></i> Devolución</button>' +
+        '<button class="btn btn-danger btn-sm" onclick="openDoubleConfirmDeleteSaleModal(\'' + s.id + '\')" title="Eliminar envío"><i class="fa-solid fa-trash-can"></i> Eliminar</button>' +
+        '</div>';
     }
 
     tr.innerHTML =
@@ -5959,8 +5986,22 @@ function renderSettlementHistory(filterSellerId) {
 }
 
 function openReturnSaleModal(saleId) {
-  const sale = APP_STATE.sales.find(s => s.id === saleId);
-  if (!sale) return;
+  // Cerca in tutti gli array possibili (sales, shipped, sold locale)
+  let sale = (APP_STATE.sales || []).find(s => s.id === saleId);
+  if (!sale) sale = (APP_STATE.shipped || []).find(s => s.id === saleId);
+  if (!sale) {
+    // Ultimo tentativo: cerca nelle vendite di tutti i venditori
+    for (const key of Object.keys(APP_STATE)) {
+      if (Array.isArray(APP_STATE[key])) {
+        const found = APP_STATE[key].find(s => s && s.id === saleId);
+        if (found && found.salePrice !== undefined) { sale = found; break; }
+      }
+    }
+  }
+  if (!sale) {
+    showToast('Venta no encontrada (ID: ' + saleId + '). Recarga los datos.', 'error');
+    return;
+  }
 
   document.getElementById('returnSaleId').value = sale.id;
   // Reset charge options
