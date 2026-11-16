@@ -1309,9 +1309,110 @@
       cursor: pointer;
       z-index: 5;
     }
+
+    /* Strip miniature multiple su card prodotto */
+    .card-thumb-strip {
+      display: flex;
+      gap: 4px;
+      padding: 6px 8px;
+      background: var(--gray-100);
+      overflow-x: auto;
+      scrollbar-width: none;
+      border-top: 1px solid var(--gray-200);
+    }
+    .card-thumb-strip::-webkit-scrollbar { display: none; }
+    .card-thumb-item {
+      width: 44px;
+      height: 44px;
+      object-fit: cover;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 2px solid transparent;
+      flex-shrink: 0;
+      opacity: 0.65;
+      transition: all 0.15s;
+    }
+    .card-thumb-item.active,
+    .card-thumb-item:hover {
+      border-color: var(--primary);
+      opacity: 1;
+      transform: scale(1.08);
+    }
+    .card-thumb-more {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 6px;
+      background: var(--gray-300);
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--gray-700);
+      flex-shrink: 0;
+    }
+  
+    /* ======================================================== */
+    /* SISTEMA DI CARICAMENTO FLUIDO NON BLOCCANTE (OPTIMISTIC UI) */
+    /* ======================================================== */
+    #loadingOverlay {
+      display: none !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+      opacity: 0 !important;
+    }
+
+    .top-progress-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      width: 0%;
+      background: linear-gradient(90deg, #2563eb, #38bdf8, #10b981);
+      z-index: 9999999;
+      transition: width 0.25s ease, opacity 0.3s ease;
+      opacity: 0;
+      pointer-events: none;
+      box-shadow: 0 0 10px rgba(37, 99, 235, 0.7);
+    }
+
+    .floating-sync-badge {
+      position: fixed;
+      bottom: 24px;
+      left: 24px;
+      background: rgba(15, 23, 42, 0.92);
+      color: #ffffff;
+      padding: 9px 18px;
+      border-radius: 9999px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
+      z-index: 99999;
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      pointer-events: none;
+      animation: slideUpBadge 0.25s ease;
+    }
+
+    @keyframes slideUpBadge {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
   </style>
 </head>
 <body>
+
+  <!-- BARRA DI PROGRESSO SUPERIORE E BADGE DI SINCRONIZZAZIONE NON BLOCCANTE -->
+  <div id="topProgressBar" class="top-progress-bar"></div>
+  <div id="floatingSyncBadge" class="floating-sync-badge">
+    <i class="fa-solid fa-rotate fa-spin" style="color: #60a5fa;"></i>
+    <span id="floatingSyncText">Sincronizzazione in corso...</span>
+  </div>
+
 
   <!-- ======================================================== -->
   <!-- PANTALLA DE LOGIN PRIVADA (REQUISITOS 6 Y 7: SIN DESPLEGABLES) -->
@@ -2940,9 +3041,12 @@ async function callServer(action, payload = {}, loadingMsg = null) {
           case 'verifySellerLogin': runner.verifySellerLogin(payload.email, payload.password); break;
           case 'getInitialData': runner.getInitialData(payload.sellerId || null); break;
           case 'addProduct': runner.addProduct(payload.product || payload); break;
+          case 'uploadProductImages': runner.uploadProductImages(payload.photos || payload.files || []); break;
+          case 'updateProduct': runner.updateProduct(payload.product || payload); break;
           case 'deleteProduct': runner.deleteProduct(payload.productId || payload.id); break;
           case 'reassignProduct': runner.reassignProduct(payload.productId || payload.id, payload.newAssignedTo || payload.assignedTo); break;
           case 'addSeller': runner.addSeller(payload.seller || payload); break;
+          case 'updateSellerFull': runner.updateSellerFull(payload.seller || payload); break;
           case 'resetSellerPassword': runner.resetSellerPassword(payload.sellerId || payload.id, payload.newPassword || payload.password); break;
           case 'updateSellerStatus': runner.updateSellerStatus(payload.sellerId || payload.id, payload.newStatus || payload.status); break;
           case 'deleteSeller': runner.deleteSeller(payload.sellerId || payload.id); break;
@@ -3367,16 +3471,69 @@ function initApp() {
   checkSavedSession();
 }
 
-function showLoading(msg) {
-  const overlay = document.getElementById('loadingOverlay');
-  const text = document.getElementById('loadingMessage');
+let topProgressInterval = null;
+let activeLoadingCount = 0;
+
+function startTopProgress() {
+  const bar = document.getElementById('topProgressBar');
+  if (!bar) return;
+  clearInterval(topProgressInterval);
+  bar.style.opacity = '1';
+  bar.style.width = '20%';
+  let currentWidth = 20;
+  topProgressInterval = setInterval(() => {
+    if (currentWidth < 85) {
+      currentWidth += Math.random() * 8;
+      bar.style.width = Math.min(85, currentWidth) + '%';
+    }
+  }, 200);
+}
+
+function finishTopProgress() {
+  const bar = document.getElementById('topProgressBar');
+  if (!bar) return;
+  clearInterval(topProgressInterval);
+  bar.style.width = '100%';
+  setTimeout(() => {
+    bar.style.opacity = '0';
+    setTimeout(() => {
+      bar.style.width = '0%';
+    }, 250);
+  }, 150);
+}
+
+function showFloatingSync(msg) {
+  const badge = document.getElementById('floatingSyncBadge');
+  const text = document.getElementById('floatingSyncText');
   if (text && msg) text.textContent = msg;
-  if (overlay) overlay.style.display = 'flex';
+  if (badge) badge.style.display = 'inline-flex';
+  
+  const connText = document.getElementById('connStatusText');
+  if (connText) connText.textContent = 'Sincronizzazione...';
+}
+
+function hideFloatingSync() {
+  const badge = document.getElementById('floatingSyncBadge');
+  if (badge) badge.style.display = 'none';
+  
+  const connText = document.getElementById('connStatusText');
+  if (connText) {
+    connText.textContent = (APP_STATE.isGoogleScript || getGoogleScriptUrl()) ? 'Google Sheets Connesso' : 'Locale / Offline';
+  }
+}
+
+function showLoading(msg) {
+  activeLoadingCount++;
+  startTopProgress();
+  showFloatingSync(msg || 'Sincronizzazione in corso...');
 }
 
 function hideLoading() {
-  const overlay = document.getElementById('loadingOverlay');
-  if (overlay) overlay.style.display = 'none';
+  activeLoadingCount = Math.max(0, activeLoadingCount - 1);
+  if (activeLoadingCount === 0) {
+    finishTopProgress();
+    hideFloatingSync();
+  }
 }
 
 function togglePasswordVisibility(inputId, btn) {
@@ -3500,7 +3657,7 @@ async function handleAdminLogin(e) {
       else sessionStorage.setItem(SESSION_AUTH_KEY, sessionData);
 
       hideLoginOverlay();
-      loadAllData(true);
+      loadAllData(false);
       showToast('¡Acceso de Administrador confirmado!', 'success');
     } else {
       showToast((res && res.error) ? res.error : 'Correo o contraseña de Administrador incorrectos.', 'error');
@@ -3551,7 +3708,7 @@ async function handleSellerLogin(e) {
       else sessionStorage.setItem(SESSION_AUTH_KEY, sessionData);
 
       hideLoginOverlay();
-      loadAllData(true);
+      loadAllData(false);
       showToast('Benvenuto, ' + res.seller.name + '!', 'success');
     } else {
       showToast((res && res.error) ? res.error : 'Credenciales de vendedor incorrectas.', 'error');
@@ -3698,7 +3855,7 @@ async function saveAndTestGoogleScriptUrl() {
       localStorage.setItem('GOOGLE_WEB_APP_URL', url);
       updateConnectionStatusBadge();
       showToast('¡Conexión a Google Sheets exitosa y guardada!', 'success');
-      await loadAllData(true);
+      loadAllData(false);
     } else {
       showToast('Google Script ha risposto con errore: ' + (json ? json.error : ''), 'warning');
     }
@@ -3714,7 +3871,7 @@ function clearGoogleScriptUrl() {
   document.getElementById('settingsGoogleScriptUrl').value = '';
   updateConnectionStatusBadge();
   showToast('URL Google Script rimosso. Torno a modalità locale.', 'info');
-  loadAllData(true);
+  loadAllData(false);
 }
 
 // ==========================================
@@ -3726,7 +3883,7 @@ async function loadAllData(showSpinner = false) {
   const sellerId = isSeller ? APP_STATE.activeSellerId : null;
 
   try {
-    const res = await callServer('getInitialData', { sellerId }, showSpinner ? 'Sincronizzazione dati da Google Sheets...' : null);
+    const res = await callServer('getInitialData', { sellerId }, null);
     if (res && (res.success || res.ok)) {
       APP_STATE.products = res.products || [];
       if (APP_STATE.products.length === 0) {
@@ -4231,16 +4388,31 @@ function renderCatalog() {
         }
       }
 
-      const numPhotos = (p.photoUrls && p.photoUrls.length) ? p.photoUrls.length : (p.photoUrl ? 1 : 0);
+      const photoUrlsArr = (p.photoUrls && p.photoUrls.length > 0) ? p.photoUrls : (p.photoUrl ? [p.photoUrl] : []);
+      const numPhotos = photoUrlsArr.length;
+
+      // Strip di miniature orizzontale (visibile solo se ci sono 2+ foto)
+      const thumbStrip = numPhotos > 1
+        ? '<div class="card-thumb-strip">' +
+            photoUrlsArr.slice(0, 6).map((url, idx) =>
+              '<img class="card-thumb-item' + (idx === 0 ? ' active' : '') + '" src="' + url + '" alt="Foto ' + (idx+1) + '" ' +
+              'onclick="event.stopPropagation(); var c=this.closest(\'.product-card\'); var main=c.querySelector(\'.product-image\'); if(main){main.src=\'' + url + '\';c.querySelectorAll(\'.card-thumb-item\').forEach(function(t){t.classList.remove(\'active\')});this.classList.add(\'active\');}" ' +
+              'onerror="this.style.display=\'none\'">'
+            ).join('') +
+            (numPhotos > 6 ? '<span class="card-thumb-more">+' + (numPhotos - 6) + '</span>' : '') +
+          '</div>'
+        : '';
+
       const photoBadge = numPhotos > 1 
-        ? '<span class="photo-badge-card" onclick="openImageGallery(APP_STATE.products.find(x => x.id === \'' + p.id + '\')); event.stopPropagation();"><i class="fa-solid fa-images"></i> ' + numPhotos + ' fotos</span>'
+        ? '<span class="photo-badge-card" onclick="openImageGallery(APP_STATE.products.find(x => x.id === \'' + p.id + '\')); event.stopPropagation();"><i class="fa-solid fa-expand"></i> ' + numPhotos + ' fotos</span>'
         : '';
 
       card.innerHTML = 
         '<div style="position: relative; cursor: pointer;" onclick="openImageGallery(APP_STATE.products.find(x => x.id === \'' + p.id + '\'))">' +
-          '<img src="' + (p.photoUrl || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500') + '" class="product-image" alt="' + escapeHtml(p.title) + '" onerror="this.src=\'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500\'">' +
+          '<img src="' + (photoUrlsArr[0] || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500') + '" class="product-image" alt="' + escapeHtml(p.title) + '" onerror="this.src=\'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500\'">' +
           photoBadge +
         '</div>' +
+        thumbStrip +
         '<div class="product-body">' +
           '<div class="product-title">' + escapeHtml(p.title) + '</div>' +
           '<div class="product-desc">' + escapeHtml(p.description || 'Sin descripción') + '</div>' +
@@ -4392,7 +4564,14 @@ function openNewSaleForProduct(prodId) {
 
   if (p && banner) {
     banner.style.display = 'flex';
-    if (bannerImg) bannerImg.src = p.photoUrl || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500';
+    if (bannerImg) {
+      const allUrls = (p.photoUrls && p.photoUrls.length > 0) ? p.photoUrls : (p.photoUrl ? [p.photoUrl] : []);
+      bannerImg.src = allUrls[0] || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500';
+      // Rende l'immagine banner cliccabile per aprire la galleria completa
+      bannerImg.style.cursor = allUrls.length > 1 ? 'pointer' : 'default';
+      bannerImg.onclick = allUrls.length > 1 ? () => openImageGallery(p) : null;
+      bannerImg.title = allUrls.length > 1 ? 'Clicca per vedere tutte le ' + allUrls.length + ' foto' : '';
+    }
     if (bannerTitle) bannerTitle.textContent = p.title;
     if (bannerRange) bannerRange.textContent = 'Precio permitido: ' + formatMoney(p.minPrice) + ' - ' + formatMoney(p.maxPrice);
     if (selectGroup) selectGroup.style.display = 'none'; // Nasconde la select: non serve selezionare di nuovo!
@@ -4466,23 +4645,79 @@ async function handleAddProductSubmit(e) {
     commissionPct: prodCommissionPct
   };
 
-  try {
-    const res = await callServer('addProduct', { product: prodData }, 'Guardando producto en Google Sheets...');
-    showToast(res.message || '¡Producto guardado en Google Sheets con éxito!', 'success');
-    closeModal('modalAddProduct');
-    await loadAllData(true);
-  } catch (err) {
-    if (err.message === 'CONFIG_URL_MISSING') {
-      const id = 'PROD-' + Math.random().toString(36).substring(2, 8).toUpperCase();
-      APP_STATE.products.unshift({ id, ...prodData, active: true, createdAt: new Date().toISOString() });
-      saveLocalData();
-      showToast('¡Producto añadido en modo local! Configura Google Script para sincronizar con Sheets.', 'warning');
-      closeModal('modalAddProduct');
-      renderAll();
-    } else {
-      showToast('Error al guardar producto en Google Sheets: ' + err.message, 'error');
+  // 1. Chiudi subito il modale per non far attendere l'utente!
+  closeModal('modalAddProduct');
+
+  // 2. Aggiornamento Ottimistico Immediato nell'interfaccia
+  const tempId = 'PROD-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+  const allPreviewUrls = currentAddPhotos.map(p => p.url || p.dataUrl).filter(Boolean);
+  const optimisticProd = {
+    id: tempId,
+    title,
+    description,
+    photoUrl: coverUrl || (allPreviewUrls[0] || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500'),
+    photoUrls: allPreviewUrls.length > 0 ? allPreviewUrls : (coverUrl ? [coverUrl] : []),
+    purchasePrice,
+    minPrice,
+    maxPrice,
+    assignedTo,
+    commissionPct: prodCommissionPct,
+    active: true,
+    createdAt: new Date().toISOString()
+  };
+  APP_STATE.products.unshift(optimisticProd);
+  saveLocalData();
+  renderAll();
+
+  showToast('🚀 ¡Producto añadido! Subiendo ' + (newPhotosToUpload.length || existingUrls.length || 1) + ' foto(s) a Drive...', 'info');
+
+  // 3. Upload in DUE PASSI separati: prima foto → poi prodotto (fix bug multi-foto)
+  // Passare le foto in un payload separato evita limiti di dimensione su GAS e HTTP
+  (async () => {
+    try {
+      let finalPhotoUrls = existingUrls.slice(); // URL già pronti (es. inseriti manualmente)
+
+      // PASSO A: Carica le foto compresse su Google Drive separatamente
+      if (newPhotosToUpload.length > 0) {
+        try {
+          const uploadRes = await callServer('uploadProductImages', { photos: newPhotosToUpload }, null);
+          if (uploadRes && uploadRes.urls && uploadRes.urls.length > 0) {
+            finalPhotoUrls = finalPhotoUrls.concat(uploadRes.urls);
+          } else {
+            console.warn('Drive upload: risposta vuota, foto non salvate su Drive');
+          }
+        } catch (uploadErr) {
+          console.warn('Upload foto a Drive fallito:', uploadErr.message);
+          // Non bloccare: il prodotto verrà salvato senza le foto su Drive
+        }
+      }
+
+      // Fallback: se non ci sono ancora URL, usa il coverUrl
+      if (finalPhotoUrls.length === 0 && coverUrl) finalPhotoUrls = [coverUrl];
+
+      // PASSO B: Salva prodotto con URL Drive — zero base64 nel payload
+      prodData.photoUrls = finalPhotoUrls;
+      prodData.photoUrl  = finalPhotoUrls[0] || coverUrl;
+      prodData.photos    = []; // svuota: niente più base64 da inviare
+
+      const res = await callServer('addProduct', { product: prodData }, null);
+      if (res && res.id) {
+        optimisticProd.id = res.id;
+        const finalUrls = (res.photoUrls && res.photoUrls.length > 0) ? res.photoUrls : finalPhotoUrls;
+        optimisticProd.photoUrls = finalUrls;
+        optimisticProd.photoUrl  = finalUrls[0] || optimisticProd.photoUrl;
+        saveLocalData();
+        renderAll();
+      }
+      const nFotos = (res && res.photoUrls) ? res.photoUrls.length : finalPhotoUrls.length;
+      showToast('✅ ¡Producto guardado con ' + nFotos + ' foto(s) en Google Drive!', 'success');
+      loadAllData(false);
+    } catch (err) {
+      if (err.message !== 'CONFIG_URL_MISSING') {
+        showToast('⚠️ Nota: ' + err.message, 'warning');
+      }
     }
-  }
+  })();
 }
 
 async function handleDeleteProduct(productId) {
@@ -4491,7 +4726,7 @@ async function handleDeleteProduct(productId) {
   try {
     const res = await callServer('deleteProduct', { productId }, 'Eliminazione prodotto da Google Sheets...');
     showToast(res.message || 'Producto eliminado de Google Sheets', 'success');
-    await loadAllData(true);
+    loadAllData(false);
   } catch (err) {
     if (err.message === 'CONFIG_URL_MISSING') {
       APP_STATE.products = APP_STATE.products.filter(p => p.id !== productId);
@@ -4782,37 +5017,52 @@ async function handleRecordSaleSubmit(e) {
     shippingStatus
   };
 
-  try {
-    const res = await callServer('recordSale', { sale: saleData }, 'Registrando venta en Google Sheets...');
-    showToast(res.message || '¡Venta registrada y lista para enviar en Google Sheets!', 'success');
-    SoundFX.playSaleChime();
-    closeModal('modalNewSale');
-    await loadAllData(true);
-  } catch (err) {
-    if (err.message === 'CONFIG_URL_MISSING') {
-      const id = 'VENTA-' + Math.random().toString(36).substring(2, 8).toUpperCase();
-      const sellerProfit = Math.max(0, salePrice - adminPurchasePrice);
-      APP_STATE.sales.unshift({
-        id,
-        ...saleData,
-        sellerProfit,
-        status: 'Venta Confirmada',
-        shippingStatus: 'Pendiente de Envío',
-        shippingDate: '',
-        carrier: '',
-        trackingNumber: '',
-        settled: false,
-        returned: false,
-        date: new Date().toISOString()
-      });
-      saveLocalData();
-      showToast('¡Venta registrada (Local)! Configura Google Script para sincronizar con Sheets.', 'warning');
-      closeModal('modalNewSale');
-      renderAll();
-    } else {
-      showToast('Error al registrar venta: ' + err.message, 'error');
-    }
-  }
+  // 1. Chiudi subito il modale
+  closeModal('modalNewSale');
+  SoundFX.playSaleChime();
+
+  // 2. Aggiornamento Ottimistico Immediato
+  const tempSaleId = 'VENTA-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+  const grossMargin = Math.max(0, salePrice - adminPurchasePrice);
+  const sellerProfit = Math.round(grossMargin * (saleCommissionPct / 100) * 100) / 100;
+
+  const optimisticSale = {
+    id: tempSaleId,
+    ...saleData,
+    sellerProfit,
+    status: 'Venta Confirmada',
+    shippingStatus: shippingStatus,
+    shippingDate: '',
+    carrier: '',
+    trackingNumber: '',
+    settled: false,
+    returned: false,
+    date: new Date().toISOString()
+  };
+
+  APP_STATE.sales.unshift(optimisticSale);
+  saveLocalData();
+  renderAll();
+
+  showToast('🚀 ¡Venta registrada! Sincronizando con Google Sheets...', 'info');
+
+  // 3. Sincronizzazione in background
+  callServer('recordSale', { sale: saleData }, 'Registrando venta...')
+    .then(res => {
+      if (res && res.id) {
+        optimisticSale.id = res.id;
+        if (res.shippingProofUrl) optimisticSale.shippingProofUrl = res.shippingProofUrl;
+        saveLocalData();
+        renderAll();
+      }
+      showToast('✅ ¡Venta confirmada en Google Sheets!', 'success');
+      loadAllData(false);
+    })
+    .catch(err => {
+      if (err.message !== 'CONFIG_URL_MISSING') {
+        showToast('⚠️ Nota: ' + err.message, 'warning');
+      }
+    });
 }
 
 function openDoubleConfirmDeleteSaleModal(saleId) {
@@ -4832,7 +5082,7 @@ async function executeDeleteSaleConfirmed() {
   try {
     const res = await callServer('deleteSaleByAdmin', { saleId }, 'Cancellazione vendita da Google Sheets...');
     showToast(res.message || 'Venta eliminada permanentemente por el Administrador.', 'success');
-    await loadAllData(true);
+    loadAllData(false);
   } catch (err) {
     if (err.message === 'CONFIG_URL_MISSING') {
       const sale = (APP_STATE.sales || []).find(s => s.id === saleId);
@@ -4857,7 +5107,7 @@ async function executeDeleteSaleDirect(saleId) {
   try {
     const res = await callServer('deleteSaleBySeller', { saleId, sellerId: APP_STATE.activeSellerId }, 'Annullamento vendita...');
     showToast(res.message || 'Venta cancelada y eliminada con éxito.', 'success');
-    await loadAllData(true);
+    loadAllData(false);
   } catch (err) {
     if (err.message === 'CONFIG_URL_MISSING') {
       const sale = (APP_STATE.sales || []).find(s => s.id === saleId);
@@ -5041,29 +5291,34 @@ async function handleRegisterShippingSubmit(e) {
     shippingNotes: document.getElementById('shipNotes').value.trim()
   };
 
-  try {
-    const res = await callServer('registerSaleShipping', { saleId, shippingData }, 'Registrando envío en Google Sheets...');
-    showToast(res.message || '¡Envío registrado con éxito en Google Sheets!', 'success');
-    closeModal('modalRegisterShipping');
-    await loadAllData(true);
-  } catch (err) {
-    if (err.message === 'CONFIG_URL_MISSING') {
-      const sale = APP_STATE.sales.find(s => s.id === saleId);
-      if (sale) {
-        sale.shippingStatus = 'Enviada';
-        sale.shippingDate = shippingData.shippingDate;
-        sale.carrier = shippingData.carrier;
-        sale.trackingNumber = shippingData.trackingNumber;
-        sale.shippingNotes = shippingData.shippingNotes;
-        saveLocalData();
-        showToast('Envío registrado (Locale).', 'warning');
-        closeModal('modalRegisterShipping');
-        renderAll();
-      }
-    } else {
-      showToast('Error al registrar envío: ' + err.message, 'error');
-    }
+  // 1. Chiudi subito il modale
+  closeModal('modalRegisterShipping');
+
+  // 2. Aggiornamento Ottimistico Immediato
+  const sale = APP_STATE.sales.find(s => s.id === saleId);
+  if (sale) {
+    sale.shippingStatus = 'Enviada';
+    sale.shippingDate = shippingData.shippingDate || new Date().toISOString();
+    sale.carrier = shippingData.carrier;
+    sale.trackingNumber = shippingData.trackingNumber;
+    sale.shippingNotes = shippingData.shippingNotes;
+    saveLocalData();
+    renderAll();
   }
+
+  showToast('🚚 Envío registrado. Sincronizando con Google Sheets...', 'info');
+
+  // 3. Sincronizzazione in background
+  callServer('registerSaleShipping', { saleId, shippingData }, 'Registrando envío...')
+    .then(res => {
+      showToast('✅ ¡Envío confirmado en Google Sheets!', 'success');
+      loadAllData(false);
+    })
+    .catch(err => {
+      if (err.message !== 'CONFIG_URL_MISSING') {
+        showToast('⚠️ Nota: ' + err.message, 'warning');
+      }
+    });
 }
 
 // ==========================================
@@ -5526,7 +5781,7 @@ async function handleReturnSaleSubmit(e) {
     const res = await callServer('processReturnSale', { saleId, reason, chargeProductCost, chargeShipping, returnShippingCost }, 'Registrando devolución en Google Sheets...');
     showToast(res.message || 'Devolución registrada con éxito en Google Sheets.', res.wasSettled ? 'warning' : 'success');
     closeModal('modalReturnSale');
-    await loadAllData(true);
+    loadAllData(false);
   } catch (err) {
     if (err.message === 'CONFIG_URL_MISSING') {
       const sale = APP_STATE.sales.find(s => s.id === saleId);
@@ -5604,7 +5859,7 @@ async function handleSettlePeriodSubmit(e) {
     const res = await callServer('closeAndSettlePeriod', { sellerId, periodLabel, customNote }, 'Cerrando período contable en Google Sheets...');
     showToast(res.message || '¡Período saldado con éxito en Google Sheets!', 'success');
     closeModal('modalSettlePeriod');
-    await loadAllData(true);
+    loadAllData(false);
   } catch (err) {
     if (err.message === 'CONFIG_URL_MISSING') {
       // Modo local: marcar ventas enviadas de este vendedor como saldadas
@@ -5726,7 +5981,7 @@ async function submitAddSeller(e) {
     const res = await callServer('addSeller', { seller: sellerData }, 'Registrando vendedor en Google Sheets...');
     showToast(res.message || '¡Vendedor ' + name + ' añadido con éxito a Google Sheets!', 'success');
     closeModal('modalAddSeller');
-    await loadAllData(true);
+    loadAllData(false);
   } catch (err) {
     if (err.message === 'CONFIG_URL_MISSING') {
       const id = 'VEND-' + Math.random().toString(36).substring(2, 7).toUpperCase();
@@ -5760,7 +6015,7 @@ async function executeGenerateRandomPasswordForSeller() {
     const res = await callServer('resetSellerPassword', { sellerId, newPassword: newPass }, 'Aggiornamento password su Google Sheets...');
     document.getElementById('resetPassCurrentValue').value = newPass;
     showToast(res.message || 'Password aggiornata su Google Sheets: ' + newPass, 'success');
-    await loadAllData(true);
+    loadAllData(false);
   } catch (err) {
     if (err.message === 'CONFIG_URL_MISSING') {
       const seller = APP_STATE.sellers.find(s => s.id === sellerId);
@@ -5805,7 +6060,7 @@ async function submitChangeSellerStatus(e) {
     const res = await callServer('updateSellerStatus', { sellerId, newStatus }, 'Aggiornamento stato su Google Sheets...');
     showToast(res.message || 'Estado del vendedor actualizado con éxito.', 'success');
     closeModal('modalChangeSellerStatus');
-    await loadAllData(true);
+    loadAllData(false);
   } catch (err) {
     if (err.message === 'CONFIG_URL_MISSING') {
       const seller = APP_STATE.sellers.find(s => s.id === sellerId);
@@ -5831,7 +6086,7 @@ async function executeDeleteSeller(sellerId) {
   try {
     const res = await callServer('deleteSeller', { sellerId }, 'Eliminando vendedor de Google Sheets...');
     showToast(res.message || 'Vendedor eliminado de Google Sheets.', res.archived ? 'warning' : 'success');
-    await loadAllData(true);
+    loadAllData(false);
   } catch (err) {
     if (err.message === 'CONFIG_URL_MISSING') {
       APP_STATE.sellers = APP_STATE.sellers.filter(s => s.id !== sellerId);
@@ -5853,7 +6108,7 @@ async function executeForceDeleteSeller(sellerId) {
   try {
     const res = await callServer('deleteSellerForce', { sellerId }, 'Eliminazione forzata da Google Sheets...');
     showToast(res.message || 'Vendedor ' + name + ' eliminado definitivamente de Google Sheets.', 'success');
-    await loadAllData(true);
+    loadAllData(false);
   } catch (err) {
     if (err.message === 'CONFIG_URL_MISSING') {
       APP_STATE.sellers = APP_STATE.sellers.filter(s => s.id !== sellerId);
@@ -6110,32 +6365,71 @@ async function handleEditProductSubmit(e) {
     active
   };
 
-  try {
-    const res = await callServer('updateProduct', { product: prodData }, 'Guardando cambios del producto en Google Sheets...');
-    showToast(res.message || 'Producto actualizado con éxito', 'success');
+  // 1. Chiudi subito il modale
+  closeModal('modalEditProduct');
 
-    // Actualiza en memoria local
-    const p = (APP_STATE.products || []).find(x => x.id === prodId);
-    if (p) {
-      Object.assign(p, prodData);
-      saveLocalData();
-    }
-    closeModal('modalEditProduct');
+  // 2. Aggiornamento Ottimistico Immediato
+  const p = (APP_STATE.products || []).find(x => x.id === prodId);
+  if (p) {
+    const allPreviewUrls = currentEditPhotos.map(x => x.url || x.dataUrl).filter(Boolean);
+    Object.assign(p, {
+      title,
+      description,
+      photoUrl: coverUrl || p.photoUrl,
+      photoUrls: allPreviewUrls.length > 0 ? allPreviewUrls : p.photoUrls,
+      purchasePrice,
+      minPrice,
+      maxPrice,
+      assignedTo,
+      commissionPct,
+      active
+    });
+    saveLocalData();
     renderAll();
-  } catch (err) {
-    if (err.message === 'CONFIG_URL_MISSING') {
-      const p = (APP_STATE.products || []).find(x => x.id === prodId);
-      if (p) {
-        Object.assign(p, prodData);
-        saveLocalData();
-      }
-      showToast('Producto actualizado localmente.', 'warning');
-      closeModal('modalEditProduct');
-      renderAll();
-    } else {
-      showToast('Error al actualizar producto: ' + err.message, 'error');
-    }
   }
+
+  showToast('🚀 Guardando cambios... subiendo ' + (newPhotosToUpload.length || 0) + ' foto(s) nueva(s).', 'info');
+
+  // 3. Due Passi: prima foto → poi salva (fix bug multi-foto su editProduct)
+  (async () => {
+    try {
+      let finalPhotoUrls = existingUrls.slice();
+
+      // PASSO A: Carica nuove foto su Drive separatamente
+      if (newPhotosToUpload.length > 0) {
+        try {
+          const uploadRes = await callServer('uploadProductImages', { photos: newPhotosToUpload }, null);
+          if (uploadRes && uploadRes.urls && uploadRes.urls.length > 0) {
+            finalPhotoUrls = finalPhotoUrls.concat(uploadRes.urls);
+          }
+        } catch (uploadErr) {
+          console.warn('Upload foto a Drive (edit) fallito:', uploadErr.message);
+        }
+      }
+
+      if (finalPhotoUrls.length === 0 && coverUrl) finalPhotoUrls = [coverUrl];
+
+      // PASSO B: Aggiorna prodotto con URL Drive — zero base64
+      prodData.photoUrls = finalPhotoUrls;
+      prodData.photoUrl  = finalPhotoUrls[0] || coverUrl;
+      prodData.newPhotos = [];
+
+      const res = await callServer('updateProduct', { product: prodData }, null);
+      if (p) {
+        const finalUrls = (res && res.photoUrls && res.photoUrls.length > 0) ? res.photoUrls : finalPhotoUrls;
+        p.photoUrls = finalUrls;
+        p.photoUrl  = finalUrls[0] || p.photoUrl;
+        saveLocalData();
+        renderAll();
+      }
+      showToast('✅ ¡Producto actualizado con ' + finalPhotoUrls.length + ' foto(s)!', 'success');
+      loadAllData(false);
+    } catch (err) {
+      if (err.message !== 'CONFIG_URL_MISSING') {
+        showToast('⚠️ Nota: ' + err.message, 'warning');
+      }
+    }
+  })();
 }
 
 async function submitEditProduct(e) {
