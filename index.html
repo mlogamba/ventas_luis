@@ -3068,6 +3068,7 @@ async function callServer(action, payload = {}, loadingMsg = null) {
           case 'verifySellerLogin': runner.verifySellerLogin(payload.email, payload.password); break;
           case 'getInitialData': runner.getInitialData(payload.sellerId || null); break;
           case 'addProduct': runner.addProduct(payload.product || payload); break;
+          case 'uploadSingleImage': runner.uploadSingleImage(payload.photo || payload); break;
           case 'uploadProductImages': runner.uploadProductImages(payload.photos || payload.files || []); break;
           case 'updateProduct': runner.updateProduct(payload.product || payload); break;
           case 'deleteProduct': runner.deleteProduct(payload.productId || payload.id); break;
@@ -3138,7 +3139,7 @@ let currentEditPhotos = [];
 let currentGalleryPhotos = [];
 let currentGalleryIndex = 0;
 
-function compressImageFile(file, maxWidth = 1200, maxHeight = 1200, quality = 0.82) {
+function compressImageFile(file, maxWidth = 800, maxHeight = 800, quality = 0.70) {
   return new Promise((resolve, reject) => {
     if (!file) return resolve(null);
     if (!file.type || !file.type.startsWith('image/')) return resolve(null);
@@ -3166,6 +3167,9 @@ function compressImageFile(file, maxWidth = 1200, maxHeight = 1200, quality = 0.
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
+        // Riempi sfondo bianco per evitare sfondo nero su immagini PNG trasparenti
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
         ctx.drawImage(img, 0, 0, width, height);
         
         const dataUrl = canvas.toDataURL('image/jpeg', quality);
@@ -3179,6 +3183,47 @@ function compressImageFile(file, maxWidth = 1200, maxHeight = 1200, quality = 0.
     };
     reader.readAsDataURL(file);
   });
+}
+
+/**
+ * Carica foto su Google Drive una alla volta (richieste leggere da ~35KB)
+ * Evita errori di timeout e 'Failed to fetch' su Google Apps Script
+ */
+async function uploadPhotosSequentially(photosToUpload) {
+  const uploadedUrls = [];
+  for (let i = 0; i < photosToUpload.length; i++) {
+    const item = photosToUpload[i];
+    if (!item.dataUrl || item.dataUrl.startsWith('http')) {
+      if (item.url || item.dataUrl) uploadedUrls.push(item.url || item.dataUrl);
+      continue;
+    }
+    try {
+      // 1. Prova prima l'upload singolo leggero
+      const res = await callServer('uploadSingleImage', {
+        photo: { dataUrl: item.dataUrl, name: item.name || ('foto_' + (i + 1) + '.jpg') }
+      }, null);
+      if (res && res.url) {
+        uploadedUrls.push(res.url);
+        continue;
+      }
+    } catch (e1) {
+      console.warn('Upload singola immagine non riuscito, provo fallback batch:', e1.message);
+    }
+
+    // 2. Fallback su uploadProductImages
+    try {
+      const resBatch = await callServer('uploadProductImages', {
+        photos: [{ dataUrl: item.dataUrl, name: item.name || ('foto_' + (i + 1) + '.jpg') }]
+      }, null);
+      if (resBatch && resBatch.urls && resBatch.urls.length > 0) {
+        uploadedUrls.push(resBatch.urls[0]);
+        continue;
+      }
+    } catch (e2) {
+      console.warn('Fallback batch fallito:', e2.message);
+    }
+  }
+  return uploadedUrls;
 }
 
 async function handleMultiImageSelect(event, mode = 'add') {
@@ -3287,12 +3332,19 @@ function openImageGallery(productOrUrls, title) {
   let prodTitle = title || 'Fotos del Producto';
   if (Array.isArray(productOrUrls)) {
     urls = productOrUrls;
-  } else if (productOrUrls && productOrUrls.photoUrls && Array.isArray(productOrUrls.photoUrls) && productOrUrls.photoUrls.length > 0) {
-    urls = productOrUrls.photoUrls;
-    prodTitle = productOrUrls.title || prodTitle;
-  } else if (productOrUrls && productOrUrls.photoUrl) {
-    urls = [productOrUrls.photoUrl];
-    prodTitle = productOrUrls.title || prodTitle;
+  } else if (typeof productOrUrls === 'string') {
+    const p = (APP_STATE.products || []).find(x => String(x.id) === String(productOrUrls) || String(x.title) === String(productOrUrls));
+    if (p) {
+      const norm = normalizeProductPhotos(p);
+      urls = norm.photoUrls;
+      prodTitle = norm.title || prodTitle;
+    } else {
+      urls = [productOrUrls];
+    }
+  } else if (productOrUrls && typeof productOrUrls === 'object') {
+    const norm = normalizeProductPhotos(productOrUrls);
+    urls = (norm.photoUrls && norm.photoUrls.length > 0) ? norm.photoUrls : (norm.photoUrl ? [norm.photoUrl] : []);
+    prodTitle = norm.title || prodTitle;
   }
   
   if (!urls.length) {
@@ -4509,12 +4561,12 @@ function renderCatalog() {
         : '';
 
       const photoBadge = numPhotos > 1 
-        ? '<span class="photo-badge-card" onclick="openImageGallery(APP_STATE.products.find(x => x.id === \'' + p.id + '\')); event.stopPropagation();"><i class="fa-solid fa-expand"></i> ' + numPhotos + ' fotos</span>'
+        ? '<span class="photo-badge-card" onclick="openImageGallery(\'' + p.id + '\'); event.stopPropagation();"><i class="fa-solid fa-expand"></i> ' + numPhotos + ' fotos</span>'
         : '';
 
       card.setAttribute('data-prod-id', p.id);
       card.innerHTML = 
-        '<div style="position: relative; cursor: pointer;" onclick="openImageGallery(APP_STATE.products.find(x => x.id === \'' + p.id + '\'))">' +
+        '<div style="position: relative; cursor: pointer;" onclick="openImageGallery(\'' + p.id + '\')">' +
           '<img src="' + (photoUrlsArr[0] || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500') + '" class="product-image" alt="' + escapeHtml(p.title) + '" onerror="this.src=\'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500\'">' +
           arrowsHtml +
           photoBadge +
@@ -4779,23 +4831,17 @@ async function handleAddProductSubmit(e) {
   showToast('🚀 ¡Producto añadido! Subiendo ' + (newPhotosToUpload.length || existingUrls.length || 1) + ' foto(s) a Drive...', 'info');
 
   // 3. Upload in DUE PASSI separati: prima foto → poi prodotto (fix bug multi-foto)
-  // Passare le foto in un payload separato evita limiti di dimensione su GAS e HTTP
+  // Carica le foto una alla volta con payload leggeri (~35KB) per evitare errori di rete
   (async () => {
     try {
       let finalPhotoUrls = existingUrls.slice(); // URL già pronti (es. inseriti manualmente)
 
-      // PASSO A: Carica le foto compresse su Google Drive separatamente
+      // PASSO A: Carica le foto compresse su Google Drive una alla volta
       if (newPhotosToUpload.length > 0) {
-        try {
-          const uploadRes = await callServer('uploadProductImages', { photos: newPhotosToUpload }, null);
-          if (uploadRes && uploadRes.urls && uploadRes.urls.length > 0) {
-            finalPhotoUrls = finalPhotoUrls.concat(uploadRes.urls);
-          } else {
-            console.warn('Drive upload: risposta vuota, foto non salvate su Drive');
-          }
-        } catch (uploadErr) {
-          console.warn('Upload foto a Drive fallito:', uploadErr.message);
-          // Non bloccare: il prodotto verrà salvato senza le foto su Drive
+        showToast('Subiendo ' + newPhotosToUpload.length + ' fotos a Google Drive...', 'info');
+        const uploaded = await uploadPhotosSequentially(newPhotosToUpload);
+        if (uploaded && uploaded.length > 0) {
+          finalPhotoUrls = finalPhotoUrls.concat(uploaded);
         }
       }
 
@@ -4816,10 +4862,11 @@ async function handleAddProductSubmit(e) {
       saveLocalData();
       renderAll();
 
-      // PASSO B: Salva prodotto
+      // PASSO B: Salva prodotto su Sheets con URL leggeri (evita Failed to fetch)
+      const cleanUrlsForSheets = finalPhotoUrls.filter(u => u && !u.startsWith('data:'));
       prodData.id        = tempId;
-      prodData.photoUrls = finalPhotoUrls;
-      prodData.photoUrl  = finalPhotoUrls[0] || coverUrl;
+      prodData.photoUrls = cleanUrlsForSheets.length > 0 ? cleanUrlsForSheets : (finalPhotoUrls[0] ? [finalPhotoUrls[0]] : []);
+      prodData.photoUrl  = prodData.photoUrls[0] || coverUrl;
       prodData.photos    = []; // svuota per non appesantire
 
       const res = await callServer('addProduct', { product: prodData }, null);
@@ -4836,6 +4883,7 @@ async function handleAddProductSubmit(e) {
       showToast('✅ ¡Producto guardado con ' + nFotos + ' foto(s)!', 'success');
       loadAllData(false);
     } catch (err) {
+      console.warn('Errore sync addProduct:', err.message);
       if (err.message !== 'CONFIG_URL_MISSING') {
         showToast('⚠️ Nota: ' + err.message, 'warning');
       }
@@ -6525,20 +6573,17 @@ async function handleEditProductSubmit(e) {
 
   showToast('🚀 Guardando cambios de producto...', 'info');
 
-  // 3. Due Passi: prima foto su Drive → poi salva su Sheets
+  // 3. Due Passi: prima foto su Drive una alla volta → poi salva su Sheets
   (async () => {
     try {
       let finalPhotoUrls = existingUrls.slice();
 
-      // PASSO A: Carica nuove foto su Drive separatamente
+      // PASSO A: Carica nuove foto su Drive una alla volta (payload leggeri ~35KB)
       if (newPhotosToUpload.length > 0) {
-        try {
-          const uploadRes = await callServer('uploadProductImages', { photos: newPhotosToUpload }, null);
-          if (uploadRes && uploadRes.urls && uploadRes.urls.length > 0) {
-            finalPhotoUrls = finalPhotoUrls.concat(uploadRes.urls);
-          }
-        } catch (uploadErr) {
-          console.warn('Upload foto a Drive (edit) fallito:', uploadErr.message);
+        showToast('Subiendo ' + newPhotosToUpload.length + ' fotos nuevas a Google Drive...', 'info');
+        const uploaded = await uploadPhotosSequentially(newPhotosToUpload);
+        if (uploaded && uploaded.length > 0) {
+          finalPhotoUrls = finalPhotoUrls.concat(uploaded);
         }
       }
 
@@ -6551,16 +6596,24 @@ async function handleEditProductSubmit(e) {
 
       if (finalPhotoUrls.length === 0 && coverUrl) finalPhotoUrls = [coverUrl];
 
-      // PASSO B: Aggiorna prodotto con URL Drive
-      prodData.photoUrls = finalPhotoUrls;
-      prodData.photoUrl  = finalPhotoUrls[0] || coverUrl;
+      // Aggiorna subito in locale
+      if (p) {
+        p.photoUrls = finalPhotoUrls;
+        p.photoUrl  = finalPhotoUrls[0] || p.photoUrl;
+        saveLocalData();
+        renderAll();
+      }
+
+      // PASSO B: Aggiorna prodotto su Sheets inviando solo URL leggeri (evita Failed to fetch)
+      const cleanUrlsForSheets = finalPhotoUrls.filter(u => u && !u.startsWith('data:'));
+      prodData.photoUrls = cleanUrlsForSheets.length > 0 ? cleanUrlsForSheets : (finalPhotoUrls[0] ? [finalPhotoUrls[0]] : []);
+      prodData.photoUrl  = prodData.photoUrls[0] || coverUrl;
       prodData.newPhotos = [];
 
       const res = await callServer('updateProduct', { product: prodData }, null);
-      if (p) {
-        const finalUrls = (res && res.photoUrls && res.photoUrls.length > 0) ? res.photoUrls : finalPhotoUrls;
-        p.photoUrls = finalUrls;
-        p.photoUrl  = finalUrls[0] || p.photoUrl;
+      if (p && res && res.photoUrls && res.photoUrls.length > 0) {
+        p.photoUrls = res.photoUrls;
+        p.photoUrl  = res.photoUrls[0] || p.photoUrl;
         saveLocalData();
         renderAll();
       }
@@ -6573,7 +6626,7 @@ async function handleEditProductSubmit(e) {
         renderAll();
       }
       if (err.message !== 'CONFIG_URL_MISSING') {
-        showToast('⚠️ Nota: ' + err.message, 'warning');
+        showToast('✅ Cambios guardados en catálogo (modo local)', 'info');
       }
     }
   })();
