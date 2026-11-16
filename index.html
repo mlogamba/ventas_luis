@@ -473,21 +473,54 @@
       box-shadow: var(--shadow-md);
     }
 
-    .product-img-box {
+    .product-img-container {
       width: 100%;
-      height: 200px;
+      height: 220px;
       background: #f8fafc;
       display: flex;
       align-items: center;
       justify-content: center;
       overflow: hidden;
       position: relative;
+      border-bottom: 1px solid var(--gray-200);
+      cursor: pointer;
+    }
+
+    .product-image {
+      max-width: 100%;
+      max-height: 100%;
+      width: auto;
+      height: auto;
+      object-fit: contain !important; /* MAI DISTORCERE, MAI ZOOMMARE, MAI TAGLIARE */
+      display: block;
+      margin: auto;
+      transition: transform 0.2s ease;
+    }
+
+    .product-card:hover .product-image {
+      transform: scale(1.02);
+    }
+
+    .product-img-box {
+      width: 100%;
+      height: 220px;
+      background: #f8fafc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+      border-bottom: 1px solid var(--gray-200);
     }
 
     .product-img-box img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
+      max-width: 100%;
+      max-height: 100%;
+      width: auto;
+      height: auto;
+      object-fit: contain !important;
+      display: block;
+      margin: auto;
     }
 
     .product-img-placeholder {
@@ -1210,6 +1243,23 @@
     }
     .photo-preview-btn:hover { background: rgba(0, 0, 0, 0.95); }
     .photo-preview-btn.danger { background: rgba(220, 38, 38, 0.85); }
+    .btn-photo-action {
+      background: rgba(15, 23, 42, 0.85);
+      color: #fff;
+      border: none;
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-photo-action:hover { background: rgba(37, 99, 235, 0.95); transform: scale(1.1); }
+    .btn-photo-action.delete { background: rgba(220, 38, 38, 0.85); }
+    .btn-photo-action.delete:hover { background: rgba(220, 38, 38, 1); }
     .photo-preview-btn.danger:hover { background: #b91c1c; }
 
     /* Lightbox Galería */
@@ -2744,7 +2794,7 @@
   </div>
 
   <!-- OVERLAY CARICAMENTO SPINNER -->
-  <div id="loadingOverlay">
+  <div id="loadingOverlay" style="display:none!important;visibility:hidden!important;pointer-events:none!important;">
     <div class="loading-box">
       <i class="fa-solid fa-circle-notch fa-spin fa-2x" style="color: var(--primary);"></i>
       <span id="loadingMessage">Operazione in corso...</span>
@@ -4566,7 +4616,7 @@ function renderCatalog() {
 
       card.setAttribute('data-prod-id', p.id);
       card.innerHTML = 
-        '<div style="position: relative; cursor: pointer;" onclick="openImageGallery(\'' + p.id + '\')">' +
+        '<div class="product-img-container" onclick="openImageGallery(\'' + p.id + '\')">' +
           '<img src="' + (photoUrlsArr[0] || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500') + '" class="product-image" alt="' + escapeHtml(p.title) + '" onerror="this.src=\'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500\'">' +
           arrowsHtml +
           photoBadge +
@@ -4619,8 +4669,8 @@ function renderCatalog() {
         const card = document.createElement('div');
         card.className = 'product-card';
         card.innerHTML =
-          '<div style="position: relative;">' +
-            '<img src="' + (p.photoUrl || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500') + '" class="product-image" alt="' + escapeHtml(p.title) + '" onerror="this.src=\'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500\'">' +
+          '<div class="product-img-container">' +
+            '<img src="' + ((p.photoUrls && p.photoUrls[0]) || p.photoUrl || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500') + '" class="product-image" alt="' + escapeHtml(p.title) + '" onerror="this.src=\'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500\'">' +
             '<span style="position: absolute; top: 10px; right: 10px; background: #7c3aed; color: #ffffff; padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 0.8rem; box-shadow: var(--shadow-sm);"><i class="fa-solid fa-rotate-left"></i> DEVUELTA</span>' +
           '</div>' +
           '<div class="product-body">' +
@@ -4667,8 +4717,8 @@ function renderCatalog() {
           : '';
 
         card.innerHTML = 
-          '<div style="position: relative;">' +
-            '<img src="' + (p.photoUrl || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500') + '" class="product-image" alt="' + escapeHtml(p.title) + '" onerror="this.src=\'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500\'">' +
+          '<div class="product-img-container">' +
+            '<img src="' + ((p.photoUrls && p.photoUrls[0]) || p.photoUrl || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500') + '" class="product-image" alt="' + escapeHtml(p.title) + '" onerror="this.src=\'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500\'">' +
             '<span style="position: absolute; top: 10px; right: 10px; background: #dc2626; color: #ffffff; padding: 4px 10px; border-radius: 6px; font-weight: 800; font-size: 0.8rem; box-shadow: var(--shadow-sm);"><i class="fa-solid fa-tag"></i> VENDIDO</span>' +
           '</div>' +
           '<div class="product-body">' +
