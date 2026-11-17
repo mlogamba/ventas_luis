@@ -4114,22 +4114,6 @@ async function loadAllData(showSpinner = false) {
         if (linkEl) linkEl.href = res.spreadsheetUrl;
       }
       APP_STATE.products = (res.products || []).map(p => normalizeProductPhotos(p));
-      if (APP_STATE.products.length === 0) {
-        APP_STATE.products = [
-          normalizeProductPhotos({
-            id: 'PROD-001',
-            title: 'Zapatillas Deportivas Runner Air',
-            description: 'Zapatillas de running ultraligeras y transpirables, tallas 40-45.',
-            photoUrl: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500',
-            photoUrls: ['https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500'],
-            purchasePrice: 30.00,
-            minPrice: 45.00,
-            maxPrice: 80.00,
-            assignedTo: 'TUTTI',
-            active: true
-          })
-        ];
-      }
       APP_STATE.sellers = (res.sellers || []).map(s => {
         const isAct = isSellerActive(s);
         return {
@@ -4232,25 +4216,8 @@ function loadLocalMockData() {
     }
   }
 
-  APP_STATE.sellers = [
-    { id: 'VEND-001', name: 'Mario Rossi', email: 'mario.rossi@esempio.com', phone: '+39 333 123 4567', status: 'Activo', password: 'Mario2026!', createdAt: new Date().toISOString() },
-    { id: 'VEND-002', name: 'Laura Bianchi', email: 'laura.bianchi@esempio.com', phone: '+39 333 765 4321', status: 'Activo', password: 'Laura2026!', createdAt: new Date().toISOString() }
-  ];
-
-  APP_STATE.products = [
-    normalizeProductPhotos({
-      id: 'PROD-001',
-      title: 'Zapatillas Deportivas Runner Air',
-      description: 'Zapatillas de running ultraligeras y transpirables, tallas 40-45.',
-      photoUrl: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500',
-      photoUrls: ['https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500'],
-      purchasePrice: 30.00,
-      minPrice: 45.00,
-      maxPrice: 80.00,
-      assignedTo: 'TUTTI',
-      active: true
-    })
-  ];
+  APP_STATE.sellers = [];
+  APP_STATE.products = [];
 
   APP_STATE.sales = [];
   APP_STATE.settlements = [];
