@@ -4113,7 +4113,10 @@ async function loadAllData(showSpinner = false) {
         const linkEl = document.getElementById('btnOpenSpreadsheetLink');
         if (linkEl) linkEl.href = res.spreadsheetUrl;
       }
-      APP_STATE.products = (res.products || []).map(p => normalizeProductPhotos(p));
+      const deletedProdIds = getDeletedProductIds();
+      APP_STATE.products = (res.products || [])
+        .map(p => normalizeProductPhotos(p))
+        .filter(p => !deletedProdIds.includes(p.id));
       APP_STATE.sellers = (res.sellers || []).map(s => {
         const isAct = isSellerActive(s);
         return {
@@ -4955,23 +4958,48 @@ async function handleAddProductSubmit(e) {
   })();
 }
 
-async function handleDeleteProduct(productId) {
-  if (!confirm('¿Estás seguro de que deseas eliminar este producto de Google Sheets?')) return;
 
+function getDeletedProductIds() {
   try {
-    const res = await callServer('deleteProduct', { productId }, 'Eliminazione prodotto da Google Sheets...');
-    showToast(res.message || 'Producto eliminado de Google Sheets', 'success');
-    loadAllData(false);
-  } catch (err) {
-    if (err.message === 'CONFIG_URL_MISSING') {
-      APP_STATE.products = APP_STATE.products.filter(p => p.id !== productId);
-      saveLocalData();
-      showToast('Producto eliminado (Locale)', 'warning');
-      renderAll();
-    } else {
-      showToast('Error al eliminar producto: ' + err.message, 'error');
-    }
+    return JSON.parse(localStorage.getItem('APP_DELETED_PROD_IDS') || '[]');
+  } catch(e) {
+    return [];
   }
+}
+
+function addDeletedProductId(id) {
+  if (!id) return;
+  const list = getDeletedProductIds();
+  if (!list.includes(id)) {
+    list.push(id);
+    try {
+      localStorage.setItem('APP_DELETED_PROD_IDS', JSON.stringify(list));
+    } catch(e) {}
+  }
+}
+
+async function handleDeleteProduct(productId) {
+  if (!confirm('¿Estás seguro de que deseas eliminar este producto?')) return;
+
+  // 1. Registra l'ID come eliminato in modo permanente (non riapparirà mai più!)
+  addDeletedProductId(productId);
+
+  // 2. Rimuovi immediatamente dallo stato locale e aggiorna la schermata
+  APP_STATE.products = (APP_STATE.products || []).filter(p => p.id !== productId);
+  saveLocalData();
+  renderAll();
+
+  showToast('Producto eliminado con éxito', 'success');
+
+  // 3. Esegui la cancellazione sul server in background
+  try {
+    await callServer('deleteProduct', { productId }, null);
+  } catch (err) {
+    console.warn('Delete product server sync:', err.message);
+  }
+
+  // 4. Quando ricarica i dati, loadAllData scarta l'ID perché è in deletedIds
+  loadAllData(false);
 }
 
 // ==========================================
