@@ -2375,7 +2375,7 @@
           <div class="form-group" id="prodCommissionPctGroup">
             <label><i class="fa-solid fa-percent" style="color:var(--primary);"></i> Comisión para este Producto (% del margen)</label>
             <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-              <input type="number" id="prodCommissionPctOverride" class="form-control" min="0" max="100" step="1" style="max-width:100px;" placeholder="Ej: 50">
+              <input type="number" id="prodCommissionPctOverride" class="form-control" min="0" max="100" step="1" style="max-width:100px;" placeholder="Ej: 50" value="50">
               <span style="color:var(--gray-600);font-size:0.9em;">Dejar vacío = usar % del vendedor asignado</span>
             </div>
             <small id="prodCommissionHint" style="color:var(--gray-500);"></small>
@@ -2762,6 +2762,19 @@
               <i class="fa-solid fa-envelope-circle-check"></i> Aggiorna la Mia Email
             </button>
           </form>
+        </div>
+
+        <!-- ACCESSO DIRETTO A GOOGLE SHEETS -->
+        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 16px; margin-bottom: 20px;">
+          <h4 style="color: #166534; margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+            <i class="fa-solid fa-table" style="color: #16a34a;"></i> Base de Datos (Google Sheets)
+          </h4>
+          <p style="font-size: 0.85rem; color: #15803d; margin-bottom: 12px;">
+            Acceso directo al archivo de Google Sheets donde se guardan todos los datos: Productos, Vendedores, Ventas y SaldiMensili.
+          </p>
+          <a id="btnOpenSpreadsheetLink" href="https://drive.google.com" target="_blank" class="btn btn-primary btn-sm" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none;">
+            <i class="fa-solid fa-arrow-up-right-from-square"></i> Abrir Google Sheets en Google Drive
+          </a>
         </div>
 
         <!-- SINCRONIZZAZIONE GOOGLE SCRIPT GITHUB PAGES -->
@@ -4095,6 +4108,11 @@ async function loadAllData(showSpinner = false) {
   try {
     const res = await callServer('getInitialData', { sellerId }, null);
     if (res && (res.success || res.ok)) {
+      if (res.spreadsheetUrl) {
+        APP_STATE.spreadsheetUrl = res.spreadsheetUrl;
+        const linkEl = document.getElementById('btnOpenSpreadsheetLink');
+        if (linkEl) linkEl.href = res.spreadsheetUrl;
+      }
       APP_STATE.products = (res.products || []).map(p => normalizeProductPhotos(p));
       if (APP_STATE.products.length === 0) {
         APP_STATE.products = [
@@ -4763,9 +4781,12 @@ function renderCatalog() {
 
 function openAddProductModal() {
   document.getElementById('formAddProduct').reset();
+  const commInp = document.getElementById('prodCommissionPctOverride');
+  if (commInp) commInp.value = '50';
   currentAddPhotos = [];
   renderPhotoPreviewGrid('add');
   populateSellerDropdowns();
+  updateProductCommissionHint();
   openModal('modalAddProduct');
 }
 
