@@ -4998,24 +4998,32 @@ function addDeletedProductId(id) {
 async function handleDeleteProduct(productId) {
   if (!confirm('¿Estás seguro de que deseas eliminar este producto?')) return;
 
-  // 1. Registra l'ID come eliminato in modo permanente (non riapparirà mai più!)
+  // 1. Registra l'ID come eliminato in modo permanente (blacklist locale)
   addDeletedProductId(productId);
 
-  // 2. Rimuovi immediatamente dallo stato locale e aggiorna la schermata
+  // 2. Rimuovi immediatamente dallo stato locale e aggiorna la schermata (UI ottimistica)
   APP_STATE.products = (APP_STATE.products || []).filter(p => p.id !== productId);
   saveLocalData();
   renderAll();
 
-  showToast('Producto eliminado con éxito', 'success');
+  showToast('Eliminando producto del servidor...', 'info');
 
-  // 3. Esegui la cancellazione sul server in background
+  // 3. Aspetta la risposta del server prima di ricaricare i dati
+  // Questo previene che loadAllData ricarichi il prodotto prima che il server lo abbia eliminato
   try {
-    await callServer('deleteProduct', { productId }, null);
+    const res = await callServer('deleteProduct', { productId }, null);
+    if (res && (res.success || res.ok)) {
+      showToast('Producto eliminado con éxito ✓', 'success');
+    } else {
+      showToast('Producto eliminado localmente (error servidor)', 'warning');
+      console.warn('Server delete error:', res && res.error);
+    }
   } catch (err) {
+    showToast('Producto eliminado localmente (sin conexión)', 'warning');
     console.warn('Delete product server sync:', err.message);
   }
 
-  // 4. Quando ricarica i dati, loadAllData scarta l'ID perché è in deletedIds
+  // 4. Ora ricarica dal server (il prodotto è già stato marcato DELETED lato GAS)
   loadAllData(false);
 }
 
