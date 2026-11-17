@@ -4116,7 +4116,14 @@ async function loadAllData(showSpinner = false) {
       const deletedProdIds = getDeletedProductIds();
       APP_STATE.products = (res.products || [])
         .map(p => normalizeProductPhotos(p))
-        .filter(p => !deletedProdIds.includes(p.id));
+        .filter(p => {
+          if (!p || !p.id) return false;
+          if (p.id === 'PROD-001') return false;
+          const t = String(p.title || '').toLowerCase();
+          if (t.includes('runner air') || t.includes('cancellato') || t === 'nuevo producto') return false;
+          if (deletedProdIds.includes(p.id)) return false;
+          return true;
+        });
       APP_STATE.sellers = (res.sellers || []).map(s => {
         const isAct = isSellerActive(s);
         return {
@@ -4209,7 +4216,17 @@ function loadLocalMockData() {
   if (saved) {
     try {
       const parsed = JSON.parse(saved);
-      APP_STATE.products = (parsed.products || []).map(p => normalizeProductPhotos(p));
+      const deletedProdIds = getDeletedProductIds();
+      APP_STATE.products = (parsed.products || [])
+        .map(p => normalizeProductPhotos(p))
+        .filter(p => {
+          if (!p || !p.id) return false;
+          if (p.id === 'PROD-001') return false;
+          const t = String(p.title || '').toLowerCase();
+          if (t.includes('runner air') || t.includes('cancellato') || t === 'nuevo producto') return false;
+          if (deletedProdIds.includes(p.id)) return false;
+          return true;
+        });
       APP_STATE.sellers = parsed.sellers || [];
       APP_STATE.sales = parsed.sales || [];
       APP_STATE.settlements = parsed.settlements || [];
